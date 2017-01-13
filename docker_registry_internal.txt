@@ -1,0 +1,271 @@
+搭建内部docker-registry + docker-registry-frontend（相当于docker-registry + docker-hub）步骤：
+
+介绍：
+docker-hub和docker-registry的分工如下：
+==============================================================================================================================================
+docker-hub
+
+负责保存集中的信息访问，关于
+
+    用户账户
+    镜像的效验码
+    公共和私人镜像仓库的区分
+
+docker-hub有几个组件：
+
+    Web UI
+    Meta-data 元数据存储（附注、星级、公共库清单）
+    访问认证
+    token管理
+==============================================================================================================================================
+dokcer-registry
+
+有这么几个特性
+
+    存储镜像、以及镜像层的家族谱系
+    没有用户账户数据
+    不知道用户的账户和安全性
+    把安全和认证委托给docker-hub来做，用token来保证传递安全
+    不需要重新发明轮子，支持多种存储后端
+    没有本地数据库
+	
+参考链接：http://cloud.51cto.com/art/201501/463682.htm
+
+Registry服务默认会将上传的镜像保存在容器的/var/lib/registry，我们将主机的/opt/registry目录挂载到该目录，即可实现将镜像保存到主机的/opt/registry目录了。
+#############################################################################################################################################################################	
+/etc/docker/registry/config.yml  //registry的配置文件
+
+#dockerrun -d -v /home/config.yml:/etc/docker/registry/config.yml -p 4000:5000 --nametest_registryregistry:2.4.1
+这里需要说明一点，在启动仓库时，需在配置文件中的storage配置中增加delete=true配置项，允许删除镜像，本次试验采用如下配置文件：
+
+root@SZX1000041895:/# cat /home/config.yml
+version: 0.1
+log:
+  fields:
+    service: registry
+storage:
+    delete:
+        enabled: true
+    cache:
+        blobdescriptor: inmemory
+    filesystem:
+        rootdirectory: /var/lib/registry
+http:
+    addr: :5000
+    headers:
+        X-Content-Type-Options: [nosniff]
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3
+#############################################################################################################################################################################	
+	
+	
+	
+
+例：sudo docker run –d –p 80:5000 --restart=always --name registry -v /opt/myregistry:/var/lib/registry registry:2  （本例中未添加可以删除镜像的字段DELETE）
+==============================================================================================================================================
+操作步骤：
+
+1.拉取镜像:
+docker pull daocloud.io/library/registry
+
+2.启动 Registry：
+#######################################################################################################################################
+#docker run -d -p 15000:5000 --restart=always --name registry_haha -v /mnt/myregistry:/var/lib/registry daocloud.io/library/registry  #
+#######################################################################################################################################
+
+
+通过访问http://172.16.254.72:15000/什么都看不到，可以访问http://172.16.254.72:15000/v2/ 得到jason数据。
+
+################################################################################################################################################################
+解决docker registry push错误“server gave HTTP response to HTTPS client”：
+[root@worker2 registry]# docker push 172.16.254.72:15000/nginx_k
+The push refers to a repository [172.16.254.72:15000/nginx_k]
+Get https://172.16.254.72:15000/v1/_ping: http: server gave HTTP response to HTTPS client
+
+
+解决方法：
+1）.在client端，即上传镜像的一端”/etc/docker/“目录下，创建”daemon.json“文件。在文件中写入：
+{ "insecure-registries":["172.16.254.72:15000"] }
+
+#vim /etc/docker/daemon.json
+保存退出后，重启docker，问题解决。
+参考链接：http://www.cnblogs.com/hobinly/p/6110624.html
+
+2）.通过修改docker启动脚本（在Registry手册中讲到，如果采用insecure registry的模式，那么所有与Registry交互的主机上的Docker Daemon都要配置：–insecure-registry选项）
+#vim /etc/systemd/system/docker.service 
+修改此行内容（实际只需要添加--insecure-registry 172.16.254.72:15000）：
+ExecStart=/usr/bin/dockerd -H tcp://127.0.0.1:2375 -H unix:///var/run/docker.sock --insecure-registry 172.16.254.72:15000
+保存退出后，重启docker，问题解决。
+################################################################################################################################################################
+
+3.上传镜像（测试将已经存在的nginx_k镜像上传到新搭建的registry）
+
+1）通过打标签指定registry
+docker tag nginx_k 172.16.254.72:15000/nginx_k:latest
+
+[root@worker2 registry]# docker images
+REPOSITORY                       TAG                 IMAGE ID            CREATED             SIZE
+jasonyin7/blockchain_miner_new   latest              18a3d6e44b63        4 days ago          1.713 GB
+blockchain_rpc_new               latest              d50925066954        6 days ago          1.039 GB
+172.16.254.72:15000/nginx_k      latest              87fea41dd838        3 weeks ago         398.5 MB
+nginx_k                          latest              87fea41dd838        3 weeks ago         398.5 MB
+jasonyin7/block_test1203         latest              b63d7967378c        3 weeks ago         1.062 GB
+jasonyin7/blockchain1            latest              1a5a84c626ff        3 weeks ago         1.08 GB
+nginx                            latest              abf312888d13        4 weeks ago         181.5 MB
+blockchain_backup_20161116       latest              2f6cfa4add30        5 weeks ago         3.86 GB
+daocloud.io/library/redis        latest              5f515359c7f8        7 weeks ago         182.9 MB
+daocloud.io/library/centos       latest              0584b3d2cf6d        7 weeks ago         196.5 MB
+jasonyin7/centos                 latest              0584b3d2cf6d        7 weeks ago         196.5 MB
+daocloud.io/library/registry     latest              c9bd19d022f6        10 weeks ago        33.27 MB
+jasonyin7/busybox                latest              e02e811dd08f        11 weeks ago        1.093 MB
+jenkins                          latest              a94b49bb279b        3 months ago        714.5 MB
+
+2）push镜像到registry
+docker push 172.16.254.72:15000/nginx_k
+
+[root@worker2 registry]# docker push 172.16.254.72:15000/nginx_k
+The push refers to a repository [172.16.254.72:15000/nginx_k]
+d8fcf074a0f7: Pushed 
+89a52108840a: Pushed 
+8f8fb61f743b: Pushed 
+5f6224bcf4b5: Pushed 
+286b9069afc3: Pushed 
+97ca462ad9ee: Pushed 
+latest: digest: sha256:9659af5b183067eb80b91b53c09b85e1cac461ec5ee83fc7b59c5671279c4464 size: 1578
+
+3）查看结果（在Private Registry2中查看或检索Repository或images， 将不能用docker search ，不支持通过web页面查看&也不能够docker search，会报错404）
+[root@worker2 registry]# docker search 172.16.254.72:15000/nginx_k 
+Error response from daemon: Unexpected status code 404
+
+但通过v2版本的API，我们可以实现相同目的，可以通过curl的方式来查看上传是否成功。
+[root@worker2 registry]# curl  http://172.16.254.72:15000/v2/_catalog
+{"repositories":["nginx_k"]}
+[root@worker2 registry]# curl  http://172.16.254.72:15000/v2/nginx_k/tags/list        
+{"name":"nginx_k","tags":["latest"]}
+
+4）测试pull镜像到本地
+
+[root@worker2 registry]# docker images
+REPOSITORY                       TAG                 IMAGE ID            CREATED             SIZE
+jasonyin7/blockchain_miner_new   latest              18a3d6e44b63        4 days ago          1.713 GB
+blockchain_rpc_new               latest              d50925066954        6 days ago          1.039 GB
+nginx_k                          latest              87fea41dd838        3 weeks ago         398.5 MB
+jasonyin7/block_test1203         latest              b63d7967378c        3 weeks ago         1.062 GB
+jasonyin7/blockchain1            latest              1a5a84c626ff        3 weeks ago         1.08 GB
+nginx                            latest              abf312888d13        4 weeks ago         181.5 MB
+blockchain_backup_20161116       latest              2f6cfa4add30        5 weeks ago         3.86 GB
+daocloud.io/library/redis        latest              5f515359c7f8        7 weeks ago         182.9 MB
+daocloud.io/library/centos       latest              0584b3d2cf6d        7 weeks ago         196.5 MB
+jasonyin7/centos                 latest              0584b3d2cf6d        7 weeks ago         196.5 MB
+daocloud.io/library/registry     latest              c9bd19d022f6        10 weeks ago        33.27 MB
+jasonyin7/busybox                latest              e02e811dd08f        11 weeks ago        1.093 MB
+jenkins                          latest              a94b49bb279b        3 months ago        714.5 MB
+
+[root@worker2 registry]# docker pull  172.16.254.72:15000/nginx_k          
+Using default tag: latest
+latest: Pulling from nginx_k
+
+Digest: sha256:9659af5b183067eb80b91b53c09b85e1cac461ec5ee83fc7b59c5671279c4464
+Status: Downloaded newer image for 172.16.254.72:15000/nginx_k:latest
+[root@worker2 registry]# docker ps
+CONTAINER ID        IMAGE                          COMMAND                  CREATED             STATUS              PORTS                     NAMES
+a00b33d4f8c1        daocloud.io/library/registry   "/entrypoint.sh /etc/"   37 minutes ago      Up 37 minutes       0.0.0.0:15000->5000/tcp   registry_haha
+[root@worker2 registry]# docker images
+REPOSITORY                       TAG                 IMAGE ID            CREATED             SIZE
+jasonyin7/blockchain_miner_new   latest              18a3d6e44b63        4 days ago          1.713 GB
+blockchain_rpc_new               latest              d50925066954        6 days ago          1.039 GB
+172.16.254.72:15000/nginx_k      latest              87fea41dd838        3 weeks ago         398.5 MB
+nginx_k                          latest              87fea41dd838        3 weeks ago         398.5 MB
+jasonyin7/block_test1203         latest              b63d7967378c        3 weeks ago         1.062 GB
+jasonyin7/blockchain1            latest              1a5a84c626ff        3 weeks ago         1.08 GB
+nginx                            latest              abf312888d13        4 weeks ago         181.5 MB
+blockchain_backup_20161116       latest              2f6cfa4add30        5 weeks ago         3.86 GB
+daocloud.io/library/redis        latest              5f515359c7f8        7 weeks ago         182.9 MB
+daocloud.io/library/centos       latest              0584b3d2cf6d        7 weeks ago         196.5 MB
+jasonyin7/centos                 latest              0584b3d2cf6d        7 weeks ago         196.5 MB
+daocloud.io/library/registry     latest              c9bd19d022f6        10 weeks ago        33.27 MB
+jasonyin7/busybox                latest              e02e811dd08f        11 weeks ago        1.093 MB
+jenkins                          latest              a94b49bb279b        3 months ago        714.5 MB
+
+==============================================================================================================================================
+再次测试push镜像（docker-registry-frontend）-->docker-registry的前端web页面
+
+docker tag konradkleine/docker-registry-frontend:v2 172.16.254.72:15000/konradkleine/docker-registry-frontend:v2
+[root@worker2 registry]# docker images
+REPOSITORY                                                  TAG                 IMAGE ID            CREATED             SIZE
+jasonyin7/blockchain_miner_new                              latest              18a3d6e44b63        4 days ago          1.713 GB
+blockchain_rpc_new                                          latest              d50925066954        6 days ago          1.039 GB
+172.16.254.72:15000/nginx_k                                 latest              87fea41dd838        3 weeks ago         398.5 MB
+nginx_k                                                     latest              87fea41dd838        3 weeks ago         398.5 MB
+172.16.254.72:15000/konradkleine/docker-registry-frontend   latest              7621ed3504d4        10 months ago       234.9 MB
+konradkleine/docker-registry-frontend                       latest              7621ed3504d4        10 months ago       234.9 MB
+
+docker push 172.16.254.72:15000/konradkleine/docker-registry-frontend:v2
+
+查看结果：
+[root@worker2 registry]# curl http://172.16.254.72:15000/v2/konradkleine/docker-registry-frontend/tags/list
+{"name":"konradkleine/docker-registry-frontend:v2","tags":["latest"]}
+[root@worker2 registry]# 
+==============================================================================================================================================
+
+#############################################################################################################################################################
+因为利用官方镜像搭建的私有docker-registry本身并没有fronted（类dockerhub），所以需要再运行一个docker-registry-frontend容器作为fronted，方便用户查看和使用。
+#############################################################################################################################################################
+1.拉取镜像
+#docker pull konradkleine/docker-registry-frontend:v2
+
+运行docker-registry-frontend，以只读模式
+########################################################################################################
+sudo docker run \
+  -d \
+  -e ENV_DOCKER_REGISTRY_HOST=ENTER-YOUR-REGISTRY-HOST-HERE \
+  -e ENV_DOCKER_REGISTRY_PORT=ENTER-PORT-TO-YOUR-REGISTRY-HOST-HERE \
+  -e ENV_MODE_BROWSE_ONLY=true \
+  -p 8080:80 \
+  konradkleine/docker-registry-frontend:v2
+########################################################################################################
+2.运行容器
+docker run \
+  -d \
+  -e ENV_DOCKER_REGISTRY_HOST=172.16.254.72 \
+  -e ENV_DOCKER_REGISTRY_PORT=15000 \
+  -p 18000:80 \
+  --restart=always \
+  konradkleine/docker-registry-frontend:v2                （虚拟机test）
+#######################################################################################################
+docker run \
+  -d \
+  -e ENV_DOCKER_REGISTRY_HOST=192.168.200.232 \
+  -e ENV_DOCKER_REGISTRY_PORT=15000 \
+  -p 18000:80 \
+  --restart=always \
+  konradkleine/docker-registry-frontend:v2                 (内网服务器)
+########################################################################################################
+[root@worker2 registry]# docker ps
+CONTAINER ID        IMAGE                                      COMMAND                  CREATED             STATUS              PORTS                           NAMES
+908b1d5e1017        konradkleine/docker-registry-frontend:v2   "/bin/sh -c $START_SC"   58 minutes ago      Up 58 minutes       443/tcp, 0.0.0.0:8070->80/tcp   berserk_cray
+9151e1fa72e9        daocloud.io/library/registry:2.5.1         "/entrypoint.sh /etc/"   About an hour ago   Up About an hour    0.0.0.0:15000->5000/tcp         registry_v2
+[root@worker2 registry]# 
+
+
+通过浏览器访问：http://172.16.254.72:8070
+
+OK，看到了Repositories &images，finish！
+
+外网要拉取镜像的话要在VPN映射fronted、registry的两个地址（否则fronted上面看见这个命令，无法pull。docker pull 192.168.200.232:15000/centos:latest ）
+
+
+
+
+
+
+
+
+
+
+
+
+
