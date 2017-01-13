@@ -1,0 +1,64 @@
+############################################################
+# Dockerfile to build blockchain container images
+# Contain tomcat8.4,java1.8,mongodb
+# Based on CentOS7
+############################################################
+# Set the base image to CentOS7
+FROM centos
+
+# File Author / Maintainer
+MAINTAINER Example yinjunfei
+
+# yum repo configure
+RUN mv /etc/yum.repos.d/CentOS-Base.repo /etc/yum.repos.d/CentOS-Base.repo.bak
+RUN curl http://mirrors.aliyun.com/repo/Centos-7.repo -o /etc/yum.repos.d/CentOS-Base.repo
+
+# Update the repository
+RUN yum update
+########################################################################################
+# Install basic tools
+#RUN yum install -y openssh-server
+RUN yum install -y less
+RUN yum install -y coreutils
+RUN yum install -y iproute
+RUN yum install -y vim
+RUN yum install -y net-tools-2.0-0.17.20131004git.el7.x86_64
+####################################################################################
+# Copy tomcat tar ball to /usr/local/
+ADD apache-tomcat-8.5.3.tar.gz /usr/local/
+
+# add resource.zip to tomcat's root dir
+ADD resources.zip /usr/local/apache-tomcat-8.5.3/
+
+#copy blockchain_rpc & cloudwallet tar ball
+ADD sharedledger-cloudwallet.war /usr/local/apache-tomcat-8.5.3/webapps/
+ADD sharedledger-rpcservices-https.war /usr/local/apache-tomcat-8.5.3/webapps/
+######################################################################################
+# Copy mongodb3.2.7 to /usr/local/
+ADD mongodb-linux-x86_64-3.2.7.tgz /usr/local/
+
+# create mongo's data_dir
+RUN mkdir -p /data/db
+RUN mkdir -p /data/logs/mongodb
+################################################################################
+# Copy jdk1.8 to /usr/local/
+ADD jdk-8u101-linux-x64.gz /usr/local/
+####################################################################################
+#set java environment
+ENV JAVA_HOME /usr/local/jdk1.8.0_101
+ENV JRE_HOME /usr/local/jdk1.8.0_101/jre
+ENV PATH $PATH:$JAVA_HOME/bin:$JRE_HOME/bin
+ENV CLASSPATH .:$JAVA_HOME/lib/dt.jar:$JAVA_HOME/lib/tools.jar:$JRE_HOME/lib
+#ENV LANG='zh_CN.UTF-8'
+#RUN source /etc/profile
+
+##########################################################################
+# Expose ports -->optional
+#EXPOSE 8080 
+#EXPOSE 8443 
+# Set the default command to execute
+# when creating a new container
+#CMD ["/usr/local/apache-tomcat-8.5.3/bin/startup.sh"]
+#################################################################################
+#define entry point which will be run first when the container starts up
+#ENTRYPOINT /usr/local/mongodb-linux-x86_64-3.2.7/bin/mongod --fork --logpath /data/logs/mongodb/mongo.log --logappend && /usr/local/apache-tomcat-8.5.3/bin/startup.sh && tail -f /usr/local/apache-tomcat-8.5.3/logs/catalina.out
